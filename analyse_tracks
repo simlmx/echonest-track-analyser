@@ -69,11 +69,11 @@ def urlopen(req, nb_retry=10):
                 # start over
                 retry = 0
                 continue
-            delay = retry + 1
+            delay = (retry + 1) ** 2
             log.info('retrying in %is', delay)
             time.sleep(delay)
         except Exception as e:
-            delay = retry + 1
+            delay = (retry + 1) ** 2
             log.exception('unhandled exception')
             log.info('retrying in %is', delay)
             time.sleep(delay)
@@ -146,9 +146,10 @@ def post_track(apikey, filename):
                 = response['response']['track']['audio_summary']['analysis_url']
             break
         elif status == 'pending':
-            delay = retry + 1
+            delay = (retry + 1) ** 2
             log.info('waiting for the analysis to finish, trying again in %is',
                      delay)
+            time.sleep(delay)
         else:
             log.error('analyse finished with status %s', status)
             break
