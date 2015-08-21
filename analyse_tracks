@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+import urllib.request
+import urllib.parse
+import urllib
+import json, os, time, logging, itertools, argparse, math
+from datetime import datetime, timedelta
+from pprint import pprint
+
+log = logging.getLogger('')
+
+
+URL_UPLOAD = 'http://developer.echonest.com/api/v4/track/upload'
+URL_GET_PROFILE = 'http://developer.echonest.com/api/v4/track/profile'
+
+class Timer(object):
+
+    @classmethod
+    def default_print_if(cls, nb_done):
+        """ only prints 0,1,2,3,9,10,20,30,..,90,100,200,300,...etc.
+        """
+        return nb_done % (10**int(math.log10(nb_done))) == 0
+
+    def __init__(self, nb_total=None, dont_print_before=1, print_if=None):
+        self.nb_total = nb_total
+        self.min_print = dont_print_before
+        self.start = datetime.utcnow()
+        self.nb_done = 0
+
+        if print_if is None:
+            print_if = self.default_print_if
+        self.print_if = print_if
+
+    def update(self, nb_done=None):
+        """ if nb_done is None, we will assume we did one more """
+        if nb_done is None:
+            self.nb_done += 1
+            nb_done = self.nb_done
+        else:
+            self.nb_done = nb_done
+
+        if nb_done >= self.min_print and self.print_if(nb_done):
+            delta = datetime.utcnow() - self.start
+            speed = 1. * nb_done /delta.total_seconds()
+            # without a nb_total specified, there is not much we can tell
+            if self.nb_total is None:
+                log.info('done {} in {} @ {:0.2f}/s'.format(
+                    nb_done, delta, speed))
+            # with a nb_total specified, we can have more stats (like an ETA)
+            else:
+                log.info(
+                    'done {} out of {} in {} @ {:0.2f}/s eta {}s'.format(
+                        nb_done, self.nb_total, delta, speed,
+                        timedelta(seconds=(self.nb_total - nb_done) / speed)))
+
+
+def urlopen(req, nb_retry=10):
+    """ special urlopen for echonest """
+    retry = 0
+    while retry < nb_retry:
+        try:
+            res = urllib.request.urlopen(req)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                log.info('we exceeded our API calls limit, waiting 61s')
+                log.debug('error header : %s', e.headers)
+                time.sleep(61)
+                # start over
+                retry = 0
+                continue
+            delay = retry + 1
+            log.warning('http error %i : %s', e.code, e.reason)
+            log.info('retrying in %is', delay)
+            time.sleep(delay)
+        except Exception as e:
+            delay = retry + 1
+            log.exception('unhandled exception')
+            log.info('retrying in %is', delay)
+            time.sleep(delay)
+        retry += 1
+    else:
+        log.error('even after %i retries we were unable to reach %s',
+                  nb_retry, req.full_url)
+        return None
+    return res
+
+def add_params_to_url(url, **params):
+    params = urllib.parse.urlencode(params)
+    url += '?' + params
+    return url
+
+
+def get_json_from_url(url):
+    req = urllib.request.Request(url=url)
+    res = urlopen(req)
+    if res is None:
+        return '{}'
+    return json.loads(res.read().decode())
+
+
+def post_song(apikey, filename):
+    log.info('opening file %s', filename)
+    songdata = open(filename, 'rb').read()
+    url = add_params_to_url(
+        URL_UPLOAD,
+        api_key=apikey,
+        filetype=os.path.splitext(filename)[1][1:],
+        format='json')
+    req = urllib.request.Request(
+        url = url,
+        data = songdata,
+        headers = {'Content-Type': 'application/octet-stream'})
+
+    log.info('sending file to echonest')
+    res = urlopen(req)
+    if res is None:
+        log.error('we were unable to upload song %s', filename)
+
+    response = json.loads(res.read().decode())
+    msg = response['response']['status']['message']
+    if msg != 'Success':
+        log.error('echonest responded with %s', msg)
+        log.error(pprint(response))
+        return
+    log.info('song successfuly sent')
+    id = response['response']['track']['id']
+
+    url = add_params_to_url(
+        URL_GET_PROFILE,
+        api_key=apikey,
+        id=id,
+        format='json',
+        bucket='audio_summary')
+
+    log.debug('waiting 2s to give a chance for the analysis to finish')
+    time.sleep(2)
+
+    log.info('fetching profile at %s', url)
+    for retry in itertools.count():
+        response = get_json_from_url(url)
+        status = response['response']['track']['status']
+        print(status)
+        if status == 'complete':
+            log.info('done!')
+            full_analysis_url \
+                = response['response']['track']['audio_summary']['analysis_url']
+            break
+        elif status == 'pending':
+            delay = retry + 1
+            log.info('waiting for the analysis to finish, trying again in %is',
+                     delay)
+        else:
+            log.error('analyse finished with status %s', status)
+            break
+
+    data = get_json_from_url(full_analysis_url)
+    pprint(data)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('files', nargs='+', help='audio files')
+    parser.add_argument('--api-key', '-k', required=True,
+                        help='your echonest api key')
+    parser.add_argument('--verbose', '-v', default=1, type=int,
+                        help='how verbose we want to be ([0-3])')
+    args = parser.parse_args()
+
+    verb_levels = {1:'WARNING',
+                   2:'INFO',
+                   3:'DEBUG'}
+    logging.basicConfig(level=verb_levels[args.verbose])
+
+    timer = Timer(len(args.files), print_if = lambda x:True)
+    for i,f in enumerate(args.files):
+        log.info('song #%i', i+1)
+        post_song(args.api_key, f)
+        timer.update()
