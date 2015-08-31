@@ -139,7 +139,6 @@ def post_track(apikey, filename):
     for retry in itertools.count():
         response = get_json_from_url(url)
         status = response['response']['track']['status']
-        print(status)
         if status == 'complete':
             log.info('done!')
             full_analysis_url \
@@ -155,7 +154,7 @@ def post_track(apikey, filename):
             break
 
     data = get_json_from_url(full_analysis_url)
-    pprint(data)
+    return data
 
 
 if __name__ == '__main__':
@@ -163,8 +162,10 @@ if __name__ == '__main__':
     parser.add_argument('files', nargs='+', help='audio files')
     parser.add_argument('--api-key', '-k', required=True,
                         help='your echonest api key')
-    parser.add_argument('--verbose', '-v', default=1, type=int,
+    parser.add_argument('--verbose', '-v', default=2, type=int,
                         help='how verbose we want to be ([1-3])')
+    parser.add_argument('--output-dir', '-o', help='output directory for the .json'
+                        'files', required=True)
     args = parser.parse_args()
 
     verb_levels = {1:'WARNING',
@@ -175,5 +176,8 @@ if __name__ == '__main__':
     timer = Timer(len(args.files), print_if = lambda x:True)
     for i,f in enumerate(args.files):
         log.info('track #%i', i+1)
-        post_track(args.api_key, f)
+        base, ext = os.path.splitext(os.path.basename(f))
+        data = post_track(args.api_key, f)
+        with(open(os.path.join(args.output_dir, base + '.json'), 'w')) as output:
+            output.write(json.dumps(data, indent=2))
         timer.update()
