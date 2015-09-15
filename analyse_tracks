@@ -53,10 +53,12 @@ class Timer(object):
                         timedelta(seconds=(self.nb_total - nb_done) / speed)))
 
 
-def urlopen(req, nb_retry=10):
-    """ special urlopen for echonest """
+def urlopen(req, nb_retry=None):
+    """ special urlopen for echonest
+        nb_retry=None means infinit loop
+    """
     retry = 0
-    while retry < nb_retry:
+    while nb_retry is None or retry < nb_retry:
         try:
             res = urllib.request.urlopen(req)
             break
@@ -69,6 +71,8 @@ def urlopen(req, nb_retry=10):
                 # start over
                 retry = 0
                 continue
+            elif e.code == 400:
+                log.info('perhaps wrong key?')
             delay = (retry + 1) ** 2
             log.info('retrying in %is', delay)
             time.sleep(delay)
