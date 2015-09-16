@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+from numpy import median, mean, std
+import json, logging, argparse, sys, csv
+from pprint import pprint
+from utils import ask_before_overwrite
+
+
+def parse_track_info(track_blob):
+    data = {}
+    # with confidence
+    for key in ['key', 'time_signature', 'mode', 'tempo']:
+        data['track_' + key] = track_blob.pop(key)
+        data['track_' + key + '_confidence'] = \
+            track_blob.pop(key + '_confidence')
+    # without confidence
+    for key in ['loudness', 'duration']:
+        data[key] = track_blob.pop(key)
+    # pprint('remaining')
+    # pprint(track_blob)
+    return data
+
+
+def parse_durations(blob, which, aggs):
+    data = {}
+    durations = [x['duration'] for x in blob]
+    for agg in aggs:
+        data[which + '_duration_' + agg.__name__] = agg(durations)
+    return data
+
+
+def parse_sections(blob, aggs):
+    data = {}
+    data['sections_nb'] = len(blob)
+    for key in ['duration', 'loudness']:
+        for agg in aggs:
+            data['sections_' + key + '_' + agg.__name__] = agg([x[key] for x in
+                                                               blob])
+    for key in ['tempo', 'key', 'mode', 'time_signature']:
+        for agg in aggs:
+            data['sections_' + key + '_' + agg.__name__] = agg([x[key] for x in
+                                                                blob])
+            data['sections_' + key + '_confidence_' + agg.__name__] = \
+                agg([x[key + '_confidence'] for x in blob])
+    return data
+
+
+def parse_segments(blob, aggs):
+    data = {}
+    data['segments_nb'] = len(blob)
+    for key in ['duration']:
+        for agg in aggs:
+            data['segments_{}_{}'.format(key, agg.__name__)] = agg([x[key] for
+                                                                    x in blob])
+    for key in ['pitches', 'timbre']:
+        # it happens that there are 12 pitches and 12 timbers!
+        for i in range(12):
+            list_ = [x[key][i] for x in blob]
+            for agg in aggs:
+                data['segments_{}_{}_{}'.format(key, i, agg.__name__)] = agg(list_)
+    return data
+
+
+def add_transpose(blob):
+    pass
+
+# only for the name
+def nb(*args, **kwargs):
+    return len(*args, **kwargs)
+
+
+def parse_json(blob):
+    data = {}
+    # track
+    data.update(parse_track_info(blob.pop('track')))
+    for what in ['tatums', 'beats', 'bars']:
+        data.update(parse_durations(blob.pop(what), what,
+                                    [mean, median, std, nb]))
+    data.update(parse_sections(blob.pop('sections'), [mean, median, std]))
+    data.update(parse_segments(blob.pop('segments'), [mean, median, std]))
+    add_transpose(data)
+    return data
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('input', nargs='+', help='.json files')
+    # parser.add_argument('--verbose', '-v', default=2, type=int,
+                        # help='how verbose we want to be ([1-3])')
+    parser.add_argument('--output', '-o', help='output (.csv) file',
+                        required=True)
+    parser.add_argument('--force', '-f', action='store_true',
+                        help='no prompt when output already exists')
+    args = parser.parse_args()
+
+    # verb_levels = {1:'WARNING',
+                   # 2:'INFO',
+                   # 3:'DEBUG'}
+    # logging.basicConfig(level=verb_levels[args.verbose])
+    logging.basicConfig(level='DEBUG')
+
+    if not (args.force or ask_before_overwrite(args.output)):
+        sys.exit()
+    output = open(args.output, 'w')
+
+    rows_raw = []
+    for filename in args.input:
+        data = json.load(open(filename))
+        parsed_data = parse_json(data)
+        rows_raw.append(parsed_data)
+
+    fieldnames = sorted(rows_raw[0].keys())
+    writer = csv.DictWriter(output, fieldnames)
+    writer.writeheader()
+    for row in rows_raw:
+        writer.writerow(row)
