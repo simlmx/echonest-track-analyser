@@ -9,12 +9,12 @@ def parse_track_info(track_blob):
     data = {}
     # with confidence
     for key in ['key', 'time_signature', 'mode', 'tempo']:
-        data['track_' + key] = track_blob.pop(key)
+        data['track_' + key] = track_blob[key]
         data['track_' + key + '_confidence'] = \
-            track_blob.pop(key + '_confidence')
+            track_blob[key + '_confidence']
     # without confidence
     for key in ['loudness', 'duration']:
-        data[key] = track_blob.pop(key)
+        data[key] = track_blob[key]
     # pprint('remaining')
     # pprint(track_blob)
     return data
@@ -44,24 +44,28 @@ def parse_sections(blob, aggs):
     return data
 
 
-def parse_segments(blob, aggs):
+def parse_segments(blob, aggs, trackkey):
     data = {}
     data['segments_nb'] = len(blob)
     for key in ['duration']:
         for agg in aggs:
             data['segments_{}_{}'.format(key, agg.__name__)] = agg([x[key] for
                                                                     x in blob])
-    for key in ['pitches', 'timbre']:
-        # it happens that there are 12 pitches and 12 timbers!
-        for i in range(12):
-            list_ = [x[key][i] for x in blob]
-            for agg in aggs:
-                data['segments_{}_{}_{}'.format(key, i, agg.__name__)] = agg(list_)
+    key = 'pitches'
+    for i in range(12):
+        list_ = [x[key][i] for x in blob]
+        for agg in aggs:
+            data['segments_{}_abs_{}_{}'.format(key, i, agg.__name__)] = \
+                agg(list_)
+            data['segments_{}_rel_{}_{}'.format(
+                key, (i - trackkey + 12) % 12, agg.__name__)] = agg(list_)
+    key = 'timbre'
+    for i in range(12):
+        list_ = [x[key][i] for x in blob]
+        for agg in aggs:
+            data['segments_{}_{}_{}'.format(key, i, agg.__name__)] = agg(list_)
     return data
 
-
-def add_transpose(blob):
-    pass
 
 # only for the name
 def nb(*args, **kwargs):
@@ -70,14 +74,13 @@ def nb(*args, **kwargs):
 
 def parse_json(blob):
     data = {}
-    # track
-    data.update(parse_track_info(blob.pop('track')))
+    data.update(parse_track_info(blob['track']))
     for what in ['tatums', 'beats', 'bars']:
-        data.update(parse_durations(blob.pop(what), what,
+        data.update(parse_durations(blob[what], what,
                                     [mean, median, std, nb]))
-    data.update(parse_sections(blob.pop('sections'), [mean, median, std]))
-    data.update(parse_segments(blob.pop('segments'), [mean, median, std]))
-    add_transpose(data)
+    data.update(parse_sections(blob['sections'], [mean, median, std]))
+    data.update(parse_segments(blob['segments'], [mean, median, std],
+                               blob['track']['key']))
     return data
 
 
